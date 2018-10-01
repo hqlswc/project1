@@ -21,6 +21,8 @@ urlpatterns = [
     url(r'^admin/', admin.site.urls),
     url(r'^$', views.index),
     url(r'^asset/$', views.asset, name="asset"),
+    url(r'^asset/ztree/', views.asset_ztree, name="asset_ztree"),
+    url(r'^asset/zChildren/', views.asset_ztree_children, name="asset_ztree_children"),
     url(r'^asset/item/', views.asset_item, name="item"),
     url(r'^asset/graph/', views.asset_graph, name="graph"),
 ]

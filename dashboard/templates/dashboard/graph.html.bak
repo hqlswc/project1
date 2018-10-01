@@ -26,7 +26,7 @@
         <hr>
         
         {% for i in data.result %}
-            <img src="http://1.85.33.61:8000/chart2.php?graphid={{ i.graphid }}&period={{ period }}" style="width:85%">
+            <img src="http://1.85.33.61:8000/chart2.php?graphid={{ i.graphid }}&period={{ period }}" style="width:1024">
         {% endfor %}
     </div>
 {% endblock %}
@@ -47,20 +47,7 @@
 
 {% block js %}
     <script>
-        var zTreeObj = {};
-        var setting = {};
-        var zNodes = [
-            {name:"test1", open:true, children:[
-                {name:"test1_1"}, {name:"test1_2"}]},
-            {name:"test2", open:true, children:[
-                {name:"test2_1"}, {name:"test2_2"}]}
-        ];
-
         $(document).ready(function() {
-            // zTree 
-            zTreeObj = $.fn.zTree.init($("#treeDemo"), setting, zNodes);
-            
-            // Period 
             $('#period').change(function() {
                 var new_period = $(this).children('option:selected').val();
                 console.log(new_period);

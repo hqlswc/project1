@@ -28,14 +28,12 @@ def asset_ztree(request):
         zNode = {
             "name": i["name"],
             "id": i["groupid"],
+            "children": asset_ztree_children(i["groupid"])
         }
         zNodes.append(zNode)
     return HttpResponse(json.dumps(zNodes))
 
-def asset_ztree_children(req):
-    print "*****children zNode*****"
-    groupid = req.POST.get('groupids')
-    print "view: groupid is ",groupid
+def asset_ztree_children(groupid):
     zNodes = []
     z = ZabbixAPI()
     HostTree = z.HostTreeGet(groupid)
@@ -45,8 +43,8 @@ def asset_ztree_children(req):
             "pId": groupid
         }
         zNodes.append(zNode)
-    print "view: zNode is ",json.dumps(zNodes)
-    return HttpResponse(json.dumps(zNodes))
+    print "children zNode",json.dumps(zNodes)
+    return zNodes
 
 def asset_item(request):
     print "Do asset item." 

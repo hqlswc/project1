@@ -12,9 +12,6 @@
     <link href="{% static 'vendor/bootstrap-3.3.7-dist/css/bootstrap.min.css' %}" rel="stylesheet">
     <link href="{% static "css/default.css" %}" rel="stylesheet">
     <link href="{% static "css/dashboard.css" %}" rel="stylesheet">
-    <link href="{% static "css/zTreeStyle/zTreeStyle.css" %}" rel="stylesheet">
-    <link href="{% static "css/dataTables/jquery.dataTables.min.css" %}" rel="stylesheet">
-<!--    <link href="{% static "css/demo.css" %}" rel="stylesheet"> -->
 
     <!-- HTML5 shim 和 Respond.js 是为了让 IE8 支持 HTML5 元素和媒体查询（media queries）功能 -->
     <!-- 警告：通过 file:// 协议（就是直接将 html 页面拖拽到浏览器中）访问页面时 Respond.js 不起作用 -->
@@ -126,21 +123,15 @@
                 </header>
             </div>
 
-            <div id="content" class="row">
+            <div id="content">
                 <header>
                     {% block content-header %}
                     {% endblock %}
                 </header>
-                <div class="col-md-3">
-                    <div>
-                        <ul id="treeDemo" class="ztree"></ul>
-                    </div>
-                </div>
-                <div class="col-md-9">
-                    <div class="content-inner">
-                        {% block content-inner %}
-                        {% endblock %}
-                    </div>
+
+                <div class="content-inner">
+                    {% block content-inner %}
+                    {% endblock %}
                 </div>
             </div>
 
@@ -160,29 +151,11 @@
 <!-- 加载 Bootstrap 的所有 JavaScript 插件。你也可以根据需要只加载单个插件。 -->
 <script src="{% static 'vendor/bootstrap-3.3.7-dist/js/bootstrap.min.js' %}"></script>
 <script src="{% static 'vendor/Chart.js/2.7.2/Chart.min.js' %}"></script>
-<script src="{% static 'vendor/zTree/jquery.ztree.core.js' %}"></script>
-<script src="{% static 'vendor/dataTables/jquery.dataTables.min.js' %}"></script>
 <script src="{% static 'js/default.js' %}"></script>
 <script src="{% static 'js/dashboard.js' %}"></script>
 
 <!-- 自定义JAVASCRIPT 脚本 -->
 {% block js %}
-<script>
-/*
-    var zTreeObj = {};
-    var setting = {};
-    var zNodes = [
-        {name:"test1", open:true, children:[
-            {name:"test1_1"}, {name:"test1_2"}]},
-        {name:"test2", open:true, children:[
-            {name:"test2_1"}, {name:"test2_2"}]}
-    ];
-
-    $(document).ready(function() {
-        zTreeObj = $.fn.zTree.init($("#treeDemo"), setting, zNodes);
-    });
-*/
-</script>
 {% endblock %}
 
 </body>
