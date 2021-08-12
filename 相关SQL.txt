@@ -1,0 +1,142 @@
+---现有数据库容量
+select
+   a.tablespace_name,
+   a.bytes_alloc/(1024*1024) "TOTAL ALLOC (MB)",
+   a.physical_bytes/(1024*1024) "TOTAL PHYS ALLOC (MB)",
+   nvl(b.tot_used,0)/(1024*1024) "USED (MB)",
+   (nvl(b.tot_used,0)/a.bytes_alloc)*100 "% USED"
+from
+   (select
+      tablespace_name,
+      sum(bytes) physical_bytes,
+      sum(decode(autoextensible,'NO',bytes,'YES',maxbytes)) bytes_alloc
+    from
+      dba_data_files
+    group by
+      tablespace_name ) a,
+   (select
+      tablespace_name,
+      sum(bytes) tot_used
+    from
+      dba_segments
+    group by
+      tablespace_name ) b
+where
+   a.tablespace_name = b.tablespace_name (+)
+and
+   a.tablespace_name not in
+   (select distinct
+       tablespace_name
+    from
+       dba_temp_files)
+order by 1;
+
+
+TABLESPACE_NAME                                              TOTAL ALLOC (MB) TOTAL PHYS ALLOC (MB)  USED (MB)     % USED
+------------------------------------------------------------ ---------------- --------------------- ---------- ----------
+PORTAL                                                             32767.9844                  1024          0          0
+SXGRID_TBS                                                         32767.9844                 20480 18664.0625 56.9582257
+
+
+
+---现有在使用的应用用户
+set linesize 200
+col USERNAME for a15
+col ACCOUNT_STATUS for a20 
+select USERNAME,ACCOUNT_STATUS,default_tablespace,TEMPORARY_TABLESPACE from dba_users where account_status not like 'EXPIRED%LOCKED' and username not in ('SYSTEM','SYSAUX');
+
+USERNAME        ACCOUNT_STATUS       TO_CHAR(CREATED,'YYY TO_CHAR(LOCK_DATE,'Y TO_CHAR(EXPIRY_DATE,
+--------------- -------------------- -------------------- -------------------- --------------------
+PORTAL          OPEN                 2016-04-05                                2016-10-02
+SXGRID          OPEN                 2016-02-18                                2020-03-04
+
+
+
+--查看应用用户授予的系统权限
+set linesize 200
+col GRANTEE for a30
+col PRIVILEGE for a40
+select GRANTEE,PRIVILEGE from dba_sys_privs where GRANTEE in ('EIS','PASSPORT','BASE','SN_EIS','DEPLOY','OA_NEW','C2C','ESS','OFFICE','EISOA','SXJYTCX') order by GRANTEE;
+
+
+
+
+
+
+---查看应用用户授予的角色
+set linesize 200
+col GRANTEE for a30
+col GRANTED_ROLE for a30
+select GRANTEE,GRANTED_ROLE from dba_role_privs where GRANTEE in ('EIS','PASSPORT','BASE','SN_EIS','DEPLOY','OA_NEW','C2C','ESS','OFFICE','EISOA','SXJYTCX') order by GRANTEE;
+
+set linesize 200
+col GRANTEE for a30
+col GRANTED_ROLE for a30
+select GRANTEE,GRANTED_ROLE from dba_role_privs where GRANTEE in ('GPCREDIT_SX','GPEX_SX','GPMS_SX','GPRESOURCE_SX','GPWORKFLOW_SX','XXGK') order by GRANTEE,GRANTED_ROLE; 
+
+
+---查看应用用户占用的空间
+set linesize 200
+col owner for a15
+select owner,sum(bytes/1024/1024/1024) from dba_segments where owner in ('EIS','PASSPORT','BASE','SN_EIS','DEPLOY','OA_NEW','C2C','ESS','OFFICE','EISOA','SXJYTCX') group by owner;
+
+
+---检查应用用户下的对象类型和其数量
+set linesize 200
+col owner for a15
+select owner,object_type,count(1) from dba_objects where owner in ('EIS','PASSPORT','BASE','SN_EIS','DEPLOY','OA_NEW','C2C','ESS','OFFICE','EISOA','SXJYTCX') group by owner,object_type order by owner,object_type;
+
+---查看dblink
+select * from dba_db_links;
+
+
+---查看LOB特殊数据类型
+select * from dba_lobs where owner in ('EIS','PASSPORT','BASE','SN_EIS','DEPLOY','OA_NEW','C2C','ESS','OFFICE','EISOA','SXJYTCX') order by owner;
+
+---数据库无效对象
+1、检查无效的数据库对象：
+
+COL OBJECT_NAME FOR A40
+
+SELECT owner, object_name, object_type,status 
+FROM dba_objects 
+WHERE status = 'INVALID'
+AND OWNER in ('BGR1','MAP_USER','MGMT_VIEW','YWZX','SNYM')
+ORDER BY OWNER;
+
+2、检查无效的约束：
+
+SELECT owner, constraint_name, table_name, constraint_type, status
+FROM dba_constraints
+WHERE status = 'DISABLED'
+AND OWNER in ('BGR1','MAP_USER','MGMT_VIEW','YWZX','SNYM')
+ORDER BY OWNER;
+
+3、检查无效的触发器：
+
+SELECT owner, trigger_name, table_name, status
+FROM dba_triggers
+WHERE status = 'DISABLED'
+AND OWNER in ('BGR1','MAP_USER','MGMT_VIEW','YWZX','SNYM')
+ORDER BY OWNER;
+
+4、检查失效的索引：
+
+SELECT owner,index_name,table_name,tablespace_name,status
+FROM dba_indexes 
+WHERE status<>'VALID'
+AND OWNER in ('BGR1','MAP_USER','MGMT_VIEW','YWZX','SNYM')
+ORDER BY OWNER;
+
+
+---数据库字符集查看
+set linesize 200
+col PARAMETER for a40
+col value for a50
+select * from v$nls_parameters;
+
+
+---查看连接用户
+select USERNAME,STATUS,MACHINE from gv$session where USERNAME IS NOT NULL ORDER BY USERNAME;
+
+tail -1000000 /opt/grid/diag/tnslsnr/ora2/listener/trace/listener.log|grep -i snym|awk -F '*' '{print $3}'|awk -F 'HOST=' '{print $2}'|awk -F ')' '{print $1}'|sort -u
