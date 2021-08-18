@@ -1,0 +1,1270 @@
+指定时间点还原数据库
+RMAN> sql "alter session set nls_date_format=''yyyy-mm-dd hh24:mi:ss''";
+RMAN> recover database until time '2021-05-28 09:00:00';
+RMAN> sql 'alter database open resetlogs';
+
+
+
+CONFIGURE SNAPSHOT CONTROLFILE NAME TO '+DATA/XAGAFW/SNAPSHOT/snapcf_xagafw2.f';
+
+
+设置恢复时间窗为7天
+设置在线日志保留3天
+星期日~全库备份
+星期一~星期六只备归档
+RMAN自动清理过期备份，不要人工删除
+
+查询临时表空间的使用率
+select
+    c.tablespace_name
+  , to_char(c.bytes/1024/1024/1024,'99,999.999')                 total_gb
+  , to_char( (c.bytes-d.bytes_used)/1024/1024/1024,'99,999.999') free_gb
+  , to_char(d.bytes_used/1024/1024/1024,'99,999.999')            use_gb
+  , to_char(d.bytes_used*100/c.bytes,'99,999.999')
+        || '%'use
+from
+    (
+        select
+            tablespace_name
+          , sum(bytes) bytes
+        from
+            dba_temp_files
+        GROUP by
+            tablespace_name
+    )
+    c
+  , (
+        select
+            tablespace_name
+          , sum(bytes_cached) bytes_used
+        from
+            v$temp_extent_pool
+        GROUP by
+            tablespace_name
+    )
+    d
+where
+    c.tablespace_name = d.tablespace_name;
+
+清除自己的回收站
+PURGE RECYCLEBIN;
+
+DBA 可以使用以下命令清除任何表空间中的所有对象
+PURGE DBA_RECYCLEBIN;
+
+
+oracle授予所有视图的查询权限
+select 'grant select on '|| OWNER || '.' ||view_name || ' to ' || '用户名;' from dba_views;
+
+
+查看每天产生归档日志的数据量
+select to_char(completion_time,'yyyy-mm-dd') as date1,count(0) as cnt,round(sum((blocks *block_size)/1024/1024)) as mb from v$archived_loggroup by to_char(completion_time,'yyyy-mm-dd') order by date1 desc;
+
+清理PDB
+关闭
+ALTER PLUGGABLE DATABASE SXCLDBCLOSE INSTANCES=ALL;
+删除
+DROP PLUGGABLE DATABASE SXCLDB INCLUDING DATAFILES;
+
+Oracle 清理日志文件
+清理log_x.xml
+先切换至对应的日志目录
+cd /opt/app/grid/diag/tnslsnr/cdb02012/listener
+adrci
+adrci> purge -age 43200
+
+查看诊断日志
+select * from v$diag_info;
+
+清理adump目录
+show parameter audit_file_dest
+find /opt/app/oracle/admin/SXXDB2/adump/ -type f -name "*.aud" -mtime +1 |xargs -i rm {}
+
+
+Oracle 19C 查询DATAGUARD数据同步状态
+
+SELECT ROLE, THREAD#, SEQUENCE#, ACTION FROM V$DATAGUARD_PROCESS;
+
+
+查询TEMP表空间关联SQL
+select a.username,
+       a.sql_id,
+       a.SEGTYPE,
+       b.BYTES_USED/1024/1024/1024||'G',
+       b.BYTES_FREE/1024/1024/1024  from   V$TEMPSEG_USAGE  a  join  V$TEMP_SPACE_HEADER b on   a.TABLESPACE=b.tablespace_name;
+
+切换UNDO表空间
+创建 UNDO 表空间
+create undo tablespace UNDOTBS3 datafile '+DATA' size 30g;
+create undo tablespace UNDOTBS4 datafile '+DATA' size 30g;
+
+查询 UNDO 表空间
+col file_name for a30
+select file_id,file_name,tablespace_name,bytes/1024/1024 MB from dba_data_files;
+select tablespace_name,block_size,status,contents,segment_space_management from dba_tablespaces;
+
+切换 UNDO 表空间并验证（PDB实例）
+alter system set undo_tablespace=UNDOTBS3 scope=both  sid='XFJXPG1';
+alter system set undo_tablespace=UNDOTBS4 scope=both  sid='XFJXPG2';
+
+切换 UNDO 表空间并验证（普通实例）
+alter system set undo_tablespace=UNDOTBS3 scope=both;
+alter system set undo_tablespace=UNDOTBS4 scope=both;
+
+查看原表空间使用情况
+等带 SHRINKS 全部为 0 时删除原 undo 表空间
+select usn,xacts,status,rssize/1024/1024/1024,hwmsize/1024/1024/1024,shrinks from v$rollstat order by rssize;
+
+删除原临时表空间同时删除数据文件
+drop tablespace UNDOTBS1 including contents and datafiles;
+
+查询长事务SQL语句
+set linesize 200
+set pagesize 5000
+col transaction_duration format a45
+with transaction_details as
+( select inst_id
+  , ses_addr
+  , sysdate - start_date as diff
+  from gv$transaction
+)
+select s.username
+, to_char(trunc(t.diff))
+             || ' days, '
+             || to_char(trunc(mod(t.diff * 24,24)))
+             || ' hours, '
+             || to_char(trunc(mod(t.diff * 24 * 60,24)))
+             || ' minutes, '
+             || to_char(trunc(mod(t.diff * 24 * 60 * 60,60)))
+             || ' seconds' as transaction_duration
+, s.program
+, s.terminal
+, s.status
+, s.sid
+, s.serial#
+from gv$session s
+, transaction_details t
+where s.inst_id = t.inst_id
+and s.saddr = t.ses_addr
+order by t.diff desc
+/
+
+按用户收集统计信息
+exec dbms_stats.gather_schema_stats(ownname=>'SHX',estimate_percent=>10,degree=>8,cascade=>true,granularity=>'ALL');
+
+
+重新编译用户下的无效对象
+EXEC dbms_utility.compile_schema('FINSSSJ',false);
+
+
+查询对象（DBLINK、TABLE、INDEX、存储过程）的创建语句
+set long 9999
+SELECT dbms_metadata.get_ddl('DB_LINK','dblink名称','owner所有者') from dual;
+
+
+oracle 动态视图的
+v$session -> V_$SESSION
+v$process -> V_$PROCESS
+
+oracle 挂载NFS参数优化
+mount \
+-t nfs \
+-o rw,bg,hard,nointr,rsize=32768,wsize=32768,nolock,proto=tcp,actimeo=0,vers=3,timeo=600 \
+NFS服务端目录  挂载点
+
+rsync 仅同步目录结构
+rsync -av --include '*/' --exclude '*' /home/src/ /home/dest/
+
+
+expdp 数据库信息查询
+set linesize 200
+set pages 1000
+set pause off
+set echo off
+set feedb on
+
+
+prompt
+prompt **** 01. Get Instance Name ****
+select instance_name from v$instance;
+
+
+prompt **** 02. Get DBID ****
+select dbid from v$database;
+
+
+prompt **** 03. Get Characterset
+select * from v$nls_parameters;
+
+
+prompt **** 04. Get User Info ****
+col USERNAME for a20
+col ACCOUNT_STATUS for a20
+select USERNAME,ACCOUNT_STATUS,to_char(created,'yyyy-mm-dd'),to_char(LOCK_DATE,'yyyy-mm-dd'),to_char(EXPIRY_DATE,'yyyy-mm-dd') from dba_users where account_status not like 'EXPIRED%LOCKED' and username not in ('SYS','SYSTEM','ZABBIX');
+
+
+prompt **** 05 Get TableSpace Capacity ****
+select
+   a.tablespace_name,
+   a.bytes_alloc/(1024*1024) "TOTAL ALLOC (MB)",
+   a.physical_bytes/(1024*1024) "TOTAL PHYS ALLOC (MB)",
+   nvl(b.tot_used,0)/(1024*1024) "USED (MB)",
+   (nvl(b.tot_used,0)/a.bytes_alloc)*100 "% USED"
+from
+   (select
+      tablespace_name,
+      sum(bytes) physical_bytes,
+      sum(decode(autoextensible,'NO',bytes,'YES',maxbytes)) bytes_alloc
+    from
+      dba_data_files
+    group by
+      tablespace_name ) a,
+   (select
+      tablespace_name,
+      sum(bytes) tot_used
+    from
+      dba_segments
+    group by
+      tablespace_name ) b
+where
+   a.tablespace_name = b.tablespace_name (+)
+and
+   a.tablespace_name not in
+   (select distinct
+       tablespace_name
+    from
+       dba_temp_files)
+order by 1;
+
+
+prompt
+
+
+【ORACLE 19C JDBC适配参数】
+1、修改sqlnet.ora
+
+vim /opt/app/19.3.0/grid/network/admin/sqlnet.ora
+
+NAMES.DIRECTORY_PATH= (TNSNAMES, EZCONNECT)
+SQLNET.ALLOWED_LOGON_VERSION_CLIENT=8
+SQLNET.ALLOWED_LOGON_VERSION_SERVER=8
+
+
+vim /opt/app/oracle/product/19.3.0/db/network/admin/sqlnet.ora
+NAMES.DIRECTORY_PATH= (TNSNAMES, EZCONNECT)
+SQLNET.ALLOWED_LOGON_VERSION_CLIENT=8
+SQLNET.ALLOWED_LOGON_VERSION_SERVER=8
+
+2、调整JDBC连接串
+jdbc:oracle:thin:@//10.5.68.25:1521/CHJYZT2
+
+【在线扫描并识别LUN】
+ls /sys/class/scsi_host/ | while read host ; do echo "- - -" > /sys/class/scsi_host/$host/scan ; done
+
+【冷知识】
+Oracle数据库中，当实例处于NOMOUNT状态，可以访问v$instance数据字典和动态性能视图。
+
+【数据库监控用户配置】
+select username,account_status from dba_users where username='ZABBIX';
+CREATE PROFILE MONITOR LIMIT PASSWORD_GRACE_TIME UNLIMITED PASSWORD_LIFE_TIME UNLIMITED PASSWORD_REUSE_MAX UNLIMITED PASSWORD_LOCK_TIME UNLIMITED;
+ALTER USER ZABBIX PROFILE MONITOR;
+ALTER USER ZABBIX IDENTIFIED BY ;
+select username,account_status from dba_users where username='ZABBIX';
+
+【ASM磁盘管理】
+ASM添加存储
+[root@edudb2 ~]# su - grid
+[grid@edudb2 ~]$ sqlplus / as sysasm
+
+
+SQL> alter diskgroup DATA add disk '/dev/oracleasm/disks/DATA09';
+
+
+SQL> alter diskgroup DATA add disk '/dev/oracleasm/disks/DATA10';
+
+
+SQL> select * from v$asm_operation;
+
+
+ASM 卷组关联物理磁盘
+SQL> select name,path from v$asm_disk_stat;
+$ oracleasm querydisk -v -p DATA01
+
+ASM 磁盘使用率
+SQL> COL NAME FOR A10
+SQL> COL USAGE FOR 990.00
+SQL> select name,(TOTAL_MB-FREE_MB)/TOTAL_MB*100  as usage from v$asm_diskgroup;
+
+日立VSP存储 查询LUN
+/opt/DynamicLinkManager/bin/dlnkmgr view -drv
+
+【RMAN备份恢复】
+查询RMAN备份结果
+SET LINES 200
+COL SESSION_KEY FORMAT 999999
+COL INPUT_TYPE FORMAT A10
+COL STATUS FORMAT A10
+COL START_TIME FORMAT A20
+COL END_TIME FORMAT A20
+COL in_size  FORMAT a10
+COL out_size FORMAT a10
+COL COMPRESSION_RATIO FORMAT 9999.99
+COL TIME_TAKEN_DISPLAY FORMAT A10
+SELECT SESSION_KEY, INPUT_TYPE, STATUS,
+       TO_CHAR(START_TIME,'yyyy-mm-dd hh24:mi') start_time,
+       TO_CHAR(END_TIME,'yyyy-mm-dd hh24:mi') end_time,
+       INPUT_BYTES_DISPLAY in_size,
+       OUTPUT_BYTES_DISPLAY out_size,
+       COMPRESSION_RATIO,
+       TIME_TAKEN_DISPLAY
+FROM V$RMAN_BACKUP_JOB_DETAILS
+WHERE end_time > sysdate -1;
+
+查询RMAN备份进度
+col opname for a30
+set linesize 500
+select inst_id,sid,serial#,opname,COMPLETE,
+trunc(((to_char(last_update_time,'dd')-to_char(start_time,'dd'))*60*24+(to_char(last_update_time,'hh24')-to_char(start_time,'hh24'))*60 +(to_char(last_update_time,'mi')-to_char(start_time,'mi')))*(100-complete)/complete) min from
+(
+SELECT inst_id,
+sid,
+serial#,
+opname,
+ROUND(SOFAR / TOTALWORK * 100, 2) COMPLETE,
+LAST_UPDATE_TIME,
+START_TIME
+FROM gV$SESSION_LONGOPS
+WHERE OPNAME LIKE 'RMAN%'
+--AND OPNAME NOT LIKE '%aggregate%'
+AND TOTALWORK != 0
+AND SOFAR <> TOTALWORK
+) t ;
+
+备份数据库
+RMAN> backup tag her_db_fullbak format '/backup/her/%d_db_%s_%p_%T.bak' (database);
+RMAN> backup tag her_arch_bak format '/backup/her/%d_arch_%s_%p_%T.bak' archivelog all;
+RMAN> backup tag her_spfile_bak format '/backup/her/%d_spfile_%s_%p_%T.bak' (spfile);
+
+按时间恢复数据库
+RMAN> recover database until time "to_date('2019-12-09 22:13:55' , 'yyyy-mm-dd hh24:mi:ss')";
+
+按SCN号恢复数据库
+RMAN> select name,to_char(checkpoint_change#) from v$datafile_header;
+RMAN> select file#,to_char(checkpoint_change#) from v$datafile;
+RMAN> recover database until scn 47902989847;
+
+清除归档日志
+删除数据库归档文件。
+RMAN> delete archivelog all;
+
+执行rman逻辑上删除过期日志
+RMAN> crosscheck archivelog all;
+RMAN> delete expired archivelog all;
+RMAN> quit
+
+12C 资源交付
+# 建表空间
+create tablespace SXDZY datafile '+DATA' size 5G autoextend on
+# 建用户
+create user SXDZY identified by "dC8%PnG6" password expire default tablespace SXDZY;
+# 赋权限
+grant connect,resource,create view to SXDZY;
+# 修改表空间权限
+alter user SXDZY quota unlimited on SXDZY;
+
+【监测工具】
+spotlight
+
+【用户相关】
+
+查询所有用户
+SQL> COL USERNAME FORMAT A20
+SQL> COL USER_ID FORMAT A20
+SQL> COL CREATED FORMAT A20
+SQL> SELECT * FROM ALL_USERS;
+
+创建一个新用户
+SQL> CREATE USER 用户名 IDENTIFIED BY 密码;
+
+分配角色、权限给新用户
+SQL> GRANT CONNECT TO 用户名； //最基本的用户权限：修改会话、建立聚簇、建立数据库链接、建立序列、建立会话、建立同义词、建立视图
+
+分配表空间给新用户
+SQL> ALTER USER 用户名 DEFAULT TABLESPACE 表空间名;
+
+删除一个用户
+SQL> DROP USER SALES CASCADE;  //删除user，并删除该user下的schema objects，而不会删除tablespace
+
+查询用户状态
+SQL> select USERNAME,ACCOUNT_STATUS,LOCK_DATE,to_char(EXPIRY_DATE,'yyyy-mm-dd HH24:MI:SS') from dba_users where USERNAME='SJJH_SCK'
+
+查询当前登录客户端
+col sid for 9999
+col serial# for 999999
+col username for a15
+col program for a20
+col machine for a30
+col client_info for a15
+
+select sid,serial#,username,program,machine,client_info
+from v$session
+where username is not null
+order by username,program,machine;
+
+【权限相关】
+有create table权限就可以create index
+有create procedure权限就可以create function
+在Oracel中无法单独授权create function，所以只要授于create procedure权限就可以了
+
+查询指定用户的权限
+SQL> COL GRANTEE FORMAT A20
+SQL> COL PRIVILEGE FORMAT A20
+SQL> C用户名;
+
+查询指定用户的角色
+SQL> COL GRANTEE FORMAT A20
+SQL> COL GRANTED_ROLE FORMAT A50
+SQL> SELECT GRANTEE,GRANTED_ROLE FROM DBA_ROLE_PRIVS WHERE GRANTEE=用户名;
+
+查看指定角色有哪些权限
+SQL> SELECT GRANTEE,PRIVILEGE FROM DBA_SYS_PRIVS WHERE GRANTEE='RESOURCE'
+
+查询当前用户的权限
+SQL> SELECT * FROM session_privs;
+
+指定用户授权、撤销授权
+SQL> GRANT CREATE DATABASE LINK TO 用户名;
+SQL> REVOKE CREATE DATABASE LINK FROM 用户名;
+
+【表空间相关】
+查看表空间使用率百分比
+column "% USED" format a8
+select tablespace_name,
+       max_gb,
+       used_gb,
+       (round(100 * used_gb / max_gb)) || '%' "% USED"
+  from (select a.tablespace_name tablespace_name,
+               round((a.bytes_alloc - nvl(b.bytes_free, 0)) / power(2, 30),
+                     2) used_gb,
+               round(a.maxbytes / power(2, 30), 2) max_gb
+          from (select f.tablespace_name,
+                       sum(f.bytes) bytes_alloc,
+                       sum(decode(f.autoextensible,
+                                  'YES',
+                                  f.maxbytes,
+                                  'NO',
+                                  f.bytes)) maxbytes
+                  from dba_data_files f
+                 group by tablespace_name) a,
+               (select f.tablespace_name, sum(f.bytes) bytes_free
+                  from dba_free_space f
+                 group by tablespace_name) b
+         where a.tablespace_name = b.tablespace_name(+)
+        union all
+        select h.tablespace_name tablespace_name,
+               round(sum(nvl(p.bytes_used, 0)) / power(2, 30), 2) used_gb,
+               round(sum(decode(f.autoextensible,
+                                'YES',
+                                f.maxbytes,
+                                'NO',
+                                f.bytes)) / power(2, 30),
+                     2) max_gb
+          from v$temp_space_header h, v$temp_extent_pool p, dba_temp_files f
+         where p.file_id(+) = h.file_id
+           and p.tablespace_name(+) = h.tablespace_name
+           and f.file_id = h.file_id
+           and f.tablespace_name = h.tablespace_name
+         group by h.tablespace_name)
+order by 4;
+
+查看表空间容量
+set lines 200
+set pages 1000
+set pause off
+set echo off
+set feedb on
+column "TOTAL ALLOC (MB)"      format 9,999,990.00
+column "TOTAL PHYS ALLOC (MB)" format 9,999,990.00
+column "USED (MB)"            format 9,999,990.00
+column "FREE (MB)"            format 9,999,990.00
+column "% USED"                format 990.00
+
+select
+  a.tablespace_name,
+  a.bytes_alloc/(1024*1024) "TOTAL ALLOC (MB)",
+  a.physical_bytes/(1024*1024) "TOTAL PHYS ALLOC (MB)",
+  nvl(b.tot_used,0)/(1024*1024) "USED (MB)",
+  (nvl(b.tot_used,0)/a.bytes_alloc)*100 "% USED"
+from
+  (select
+      tablespace_name,
+      sum(bytes) physical_bytes,
+      sum(decode(autoextensible,'NO',bytes,'YES',maxbytes)) bytes_alloc
+    from
+      dba_data_files
+    group by
+      tablespace_name ) a,
+  (select
+      tablespace_name,
+      sum(bytes) tot_used
+    from
+      dba_segments
+    group by
+      tablespace_name ) b
+where
+  a.tablespace_name = b.tablespace_name (+)
+and
+  a.tablespace_name not in
+  (select distinct
+      tablespace_name
+    from
+      dba_temp_files)
+order by 1;
+
+查看指定用户的默认表空间
+SQL> SELECT DEFAULT_TABLESPACE,USERNAME FROM DBA_USERS WHERE USERNAME=用户名;
+
+查看表空间是否为自动扩展
+SQL> COL FILE_NAME FORMAT A50
+SQL> COL AUTOEXTENSIBLE FORMAT A10
+SQL> SET LINESIZE 150
+SQL> SELECT FILE_NAME,AUTOEXTENSIBLE from DBA_DATA_FILES WHERE TABLESPACE_NAME=表空间名;
+
+FILE_NAME                      AUTOEXTENS
+-------------------------------------------------- ----------
++DATA/testutf8/datafile/tbs_hq.452.1017654349      YES
+
+设置表空间为自动扩展
+SQL> alter database datafile '+DATA/sxptgldb/datafile/system.550.1017397313' autoextend on;
+
+添加表空间数据文件
+SQL> alter tablespace 表空间名称 add datafile '+DATA' size 5G autoextend on;
+
+
+
+【SYSAUX 表空间清理】
+https://www.cnblogs.com/acdante/archive/2018/07/04/9228457.html
+https://database.51cto.com/art/201911/606667.htm
+
+查询 AWR 的保留期限
+select retention from dba_hist_wr_control;
+
+查询SYSAUX表空间使用详细情况
+SELECT occupant_name "Item",
+space_usage_kbytes / 1048576 "Space Used (GB)",
+schema_name "Schema",
+move_procedure "Move Procedure"
+FROM v$sysaux_occupants
+ORDER BY space_usage_kbytes desc;
+
+生成清理sql 语句
+select distinct 'truncate  table  '||segment_name||';',s.bytes/1024/1024
+  from dba_segments s
+  where s.segment_name like 'WRH$%'
+    and segment_type in ('TABLE PARTITION', 'TABLE')
+    and s.bytes/1024/1024>100
+    order by s.bytes/1024/1024/1024 desc;
+
+查询AWR快照信息
+select min(snap_id),max(snap_id) from   wrh$_active_session_history;
+
+【锁相关】
+查询锁的会话
+select * from gv$locked_object
+
+查询会话进程号
+select a.SID,a.USERNAME,a.status,a.process,b.SPID from v$session a,v$process b where a.PADDR=b.ADDR;
+
+查询锁的SID，SERIAL#
+SELECT
+S.USERNAME,
+DECODE(L.TYPE, 'TM', 'TABLE LOCK', 'TX', 'ROW LOCK', NULL) LOCK_LEVEL,
+O.OWNER,
+O.OBJECT_NAME,
+O.OBJECT_TYPE,
+S.SID,
+S.SERIAL#,
+S.TERMINAL,
+S.MACHINE,
+S.PROGRAM,
+S.OSUSER
+  FROM GV$SESSION S, V$LOCK L, DBA_OBJECTS O
+WHERE L.SID = S.SID
+  AND L.ID1 = O.OBJECT_ID(+)
+  AND S.USERNAME IS NOT NULL;
+
+
+oracle数据库查询正在执行的sql,通过gv$ session 和gv$sqlarea两个视图:
+select n.sid,n.serial#,n.program,n.terminal,n.logon_time,n.machine,n.sql_id,a.sql_text from gv$session n,gv$sqlarea a where n.sql_id=a.sql_id order by logon_time;
+
+或者指定查询alter开头的sql：
+select n.sid,n.serial#,n.program,n.terminal,n.logon_time,n.machine,n.sql_id,a.sql_text from gv$session n,gv$sqlarea a where n.sql_id=a.sql_id and a.sql_text like 'alter%' order by logon_time;
+
+用会话命令：（把上面命令查询到的sid和serial#填写到下面的语句中）
+alter system kill session 'sid,serial#' immediate;
+
+终止带锁的会话
+SQL> alter system kill session 'sid,serial#' immediate;
+
+查询数据库锁表的语句
+select sql_text from v$sql where hash_value in
+(select sql_hash_value from v$session where sid in
+(select session_id from v$locked_object));
+
+找出数据库的serial#,以备杀死：
+select t2.username,t2.sid,t2.serial#,t2.logon_time
+from v$locked_object t1,v$session t2
+where t1.session_id=t2.sid order by t2.logon_time;
+
+select t2.username,t2.sid,t2.serial#,t2.logon_time,t2.sid || ',' ||t2.serial#
+from v$locked_object t1,v$session t2
+where t1.session_id=t2.sid order by t2.logon_time;
+
+杀死session
+alter system kill session 'sid,serial#'
+
+
+
+
+
+用户解锁
+# su - oracle
+$ export ORACLE_SID=数据库实例名
+SQL> select username,account_status from dba_users;
+SQL> alter user 数据库用户名 account unlock;
+
+查询当前活动会话
+SQL> select USERNAME,STATUS from v$session where USERNAME IS NOT NULL;
+
+
+USERNAME              STATUS
+------------------------------ --------
+SYS                  ACTIVE
+ZABBIX                  INACTIVE
+SYS                  INACTIVE
+ZABBIX                  ACTIVE
+TJFX_NEW              INACTIVE
+SYS                  ACTIVE
+SYSTEM                  INACTIVE
+
+
+【12C 相关】
+登录 Oracle 12C 容器数据库
+# su - oracle
+$ sqlplus / as sysdba
+SQL> show con_name;
+SQL> show pdbs;
+SQL> alter session set container=容器名称;
+
+授予用户的表空间权限
+SQL> select * from dba_role_privs where GRANTEE=用户名;
+SQL> alter user 用户名 quota unlimited tablespace 用户名;
+
+【日志相关】
+# locate alert_实例名.log
+或者
+# ls $ORACLE_BASE/diag/rdbms/sxxedb1/SXXEDB12/trace/alert_SXXEDB12.log
+
+数据库客户端IP
+locate listener.log
+tail -10000 /opt/grid/diag/tnslsnr/wjwdb2/listener/trace/listener.log |grep sxptgldb|awk -F '*' '{print $3}'|awk -F 'HOST=' '{print $2}'|awk -F ')' '{print $1}'|sort -u
+
+【归档空间不足】
+show parameter recovery;
+
+
+select * from v$flash_recovery_area_usage;
+
+
+
+
+ALTER SYSTEM SET db_recovery_file_dest_size='100G' SCOPE=BOTH;
+
+【sqlplus 乱码】
+export NLS_LANG="AMERICAN_CHINA.ZHS16GBK"
+
+
+查看数据库当前字符集参数设置
+SELECT * FROM v$nls_parameters;
+
+
+查看数据库可用字符集参数设置
+SELECT * FROM v$nls_valid_values;
+
+【sqlplus 美化】
+# vim /home/oracle/.bash_profile
+
+# NLS configure
+NLS_LANG="AMERICAN_CHINA.ZHS16GBK"; export NLS_LANG
+NLS_DATE_FORMAT="YYYY-MM-DD HH24:MI:SS"; export NLS_DATE_FORMAT
+
+# rlwrap configure
+alias sqlplus='rlwrap sqlplus'
+alias rman='rlwrap rman'
+alias asmcmd='rlwrap asmcmd'
+
+-- glogin.sql
+set linesize 200
+set pagesize 200
+col username for a20
+col value for a40
+set sqlprompt "_user'@'_connect_identifier>"
+
+【查看REDO 日志切换频率】
+select b.SEQUENCE#, b.FIRST_TIME,a.SEQUENCE#,a.FIRST_TIME,round(((a.FIRST_TIME-b.FIRST_TIME)*24)*60,2) from v$log_history a, v$log_history b where a.SEQUENCE#=b.SEQUENCE#+1 and b.THREAD#=1 order by a.SEQUENCE# desc;
+
+【调整REDO】
+If redo logs switch every 3 minutes, you will see performance degradation. This indicates the redo logs are not sized large enough to efficiently handle the transaction load.
+如果redo日志每3分钟切换一次，您将看到性能下降。这表明重做日志的大小不够大，无法有效地处理事务负载。
+调整REDO LOG，从1G * 3调整为2G *5：
+调整REDO LOG
+17.6 KB
+
+
+【优化REDO】
+-- 查询现在的redo log状态(每个线程2组redo)
+col member for a80
+select group#,thread#,members,bytes/1024/1024,status,archived from v$log;
+-- 修改online_log_dest路径
+--alter system set db_create_online_log_dest_1='+REDO1' scope=both sid='*' ;
+--alter system set db_create_online_log_dest_2='+REDO2' scope=both sid='*' ;
+alter database add logfile thread 1 group 11 size 1g;
+alter database add logfile thread 1 group 12 size 1g;
+alter database add logfile thread 1 group 13 size 1g;
+alter database add logfile thread 1 group 14 size 1g;
+alter database add logfile thread 1 group 15 size 1g;
+alter database add logfile thread 2 group 21 size 1g;
+alter database add logfile thread 2 group 22 size 1g;
+alter database add logfile thread 2 group 23 size 1g;
+alter database add logfile thread 2 group 24 size 1g;
+alter database add logfile thread 2 group 25 size 1g;
+-- 切换旧日志
+alter system archive log current;
+alter system checkpoint;
+-- 删除unused 日志
+alter database drop logfile group ;
+
+【undo 表空间】
+读一致性：
+在Oracle数据库中，对数据进行修改会在两个不同的位置(REDO和UNDO)进行记录。REDO用于记录重做或者前滚事务，UNDO中记录会应对事务失败或者回滚所需的信息。对查询而言，Oracle不关心数据当前是否被锁定(被锁定意味着数据已经改变)，Oracle会从UNDO空间取得原来的值，即查询的结果在其开始的时间点就已经确立。
+
+事务回滚：
+数据库在执行INSERT，UPDATE，DELETE操作时，首先需要在UNDO表空间获取一个事务槽，分配空间，然后创建镜像，事务才会进行，Oracle以此保证事务是可以回滚的。不同的DML操作，UNDO BLOCK中保存的前映像内容不一样：
+INSERT操作，UNDO中会保存插入记录的rowid，如果须要回退，通过保存的rowid进行删除。
+UPDATE操作，UNDO中需要记录被更新字段的旧值，如果须要回退，需要通过旧值覆盖更新后的值。
+DELETE操作，UNDO中会记录整行的数据，如果须要回退，需要将这整行的数据插入至表中。
+
+数据库恢复：
+Oracle数据库会根据REDO日志，先前滚，将已经提交的但没有写入数据文件的数据，根据REDO的记录写入数据文件。然后回滚，将没有提交但已经写入数据文件的数据，根据回滚段的记录恢复回去。
+
+闪回查询：
+闪回查询是Oracle的利用UNDO表空间记录对Oracle表历史数据进行查看。（闪回删除与undo无关）
+
+【 SCAN VIP和普通VIP有什么区别 】
+http://blog.chinaunix.net/uid-24612962-id-3847628.html
+SCAN(Single Client Access Name) 是一个域名，对VIP的上层封装，最主要的目的是简化了客户端访问数据库时的JDBC 连接配置，并且方便增删节点
+
+无论cluster有多大（两个节点或者20个节点），都只有三个scan vip，在随机的节点上启动（如果是两个节点，可能三个vip在一个节点，也可能是1＋2）
+scan主要是简化客户端连接，你如果有20个节点，客户端连接的时候，是不是需要配置20个vip，如果用scan，只需要一个scan name就行了，剩下的事情，scan帮你做了
+查看scan 配置信息（srvctl config scan）
+
+NTP 同步定时任务
+/usr/sbin/ntpdate -u 10.5.66.17 >/dev/null 2>&1;/sbin/hwclock -w
+
+检查Oracle 用户信息的脚本
+CheckDBUser.sh
+1.8 KB
+
+
+
+关闭NUMA
+
+设置最大物理内存（单位KB）
+/etc/security/limits.conf
+oracle soft memlock
+
+HugePages
+如果Oracle 是11g以后的版本，那么默认创建的实例会使用Automatic Memory Management (AMM)的特性，该特性与HugePage不兼容。
+在设置HugePage之前需要先禁用AMM。设置初始化参数MEMORY_TARGET 和MEMORY_MAX_TARGET 为0即可。
+
+
+hugepages 是操作系统的参数，和amm 没有关系，amm 是数据库内存的，不管是10g还是11g
+如果内存大，一定要设置hugepage，那么就要禁用AMM
+设置hugepage后，就 要禁用   AMM
+
+
+一般超过32G，都需要设置hugepages
+
+
+
+基于SELECT 级别的tns配置
+
+
+
+查看存储过程内容
+select text from all_source where name = 'EMP_COUNT';
+
+【笔记】Oracle RAC 存储空间扩容
+1、echo 刷新磁盘
+
+执行刷新命令
+ls /sys/class/scsi_host/ | while read host ; do echo "- - -" > /sys/class/scsi_host/$host/scan ; done
+
+查看新识别的硬盘
+ls -l /dev/disk/by-id
+lrwxrwxrwx 1 root root 11 Sep 29 09:47 dm-name-360002ac0000000000000042a000239ae -> ../../dm-18
+lrwxrwxrwx 1 root root 11 Sep 29 09:47 dm-name-360002ac0000000000000042b000239ae -> ../../dm-19
+lrwxrwxrwx 1 root root 11 Sep 29 09:47 dm-name-360002ac0000000000000042c000239ae -> ../../dm-16
+lrwxrwxrwx 1 root root 11 Sep 29 09:47 dm-name-360002ac0000000000000042d000239ae -> ../../dm-17
+
+2、编辑multipath
+编辑multipath.conf，添加新设备
+vim /etc/multipath.conf
+
+multipath {
+                wwid                360002ac0000000000000042a000239ae
+                alias                   3p_data5
+          }
+
+刷新multipath服务
+multipath -F
+multipath -v2
+
+执行命令后会出现如下回显
+
+create: 3p_data4 (360002ac00000000000000196000239ae) undef 3PARdata,VV
+size=700G features='1 queue_if_no_path' hwhandler='1 alua' wp=undef
+`-+- policy='service-time 0' prio=50 status=undef
+  |- 15:0:0:11 sdau 66:224 undef ready running
+  |- 15:0:1:11 sdax 67:16  undef ready running
+  |- 18:0:0:11 sdba 67:64  undef ready running
+  `- 18:0:1:11 sdbd 67:112 undef ready running
+......
+
+3、udev编辑
+查看新加设备的权限
+ls -lsa /dev/dm*
+
+编辑udev规则文件
+vim /etc/udev/rules.d/99-oracle-asmdevices.rules
+
+KERNEL=="dm-*",ENV{DM_UUID}=="mpath-360002ac0000000000000042d000239ae",OWNER="grid",GROUP="asmadmin",MODE="0660"
+
+重启udev 服务
+/sbin/udevadm control --reload-rules
+/sbin/udevadm trigger --type=devices --action=change
+
+再次查看新加设备的权限是否变更
+ls -lsa /dev/dm*
+
+
+ansiable 批量抓取主机 HBA卡信息
+ansible h3c -m shell -a 'ls /sys/class/fc_host/ | while read host; do echo "HBA Card:   " $host; echo "Port State: " `cat /sys/class/fc_host/$host/port_state`; echo "Port ID:    " `cat /sys/class/fc_host/$host/port_id`; echo "Port Name:  " `cat /sys/class/fc_host/$host/port_name`;done' --ask-vault-pass
+
+Windows 抓取主机HBA卡信息
+查看HBA卡WWN号
+Get-InitiatorPort
+
+查看映射硬盘WWN
+get-disk |fl
+get-disk |select UniqueId,Size,Manufacturer,Number
+
+几种不同的多路径软件查看多路径状态的方法
+日立多路径软件（HDLM）查看多路径状态：dlnkmgr view -path
+RHEL自带多路径软件(Multipath)查看多路径状态：multipath -ll
+EMC多路径软件(PowerPath)查看多路径状态：powermt display dev=all
+华为多路径（UltraPath）查看多路径状态：upadmin show vlun
+
+
+删除归档
+delete  archivelog  time between "2016-01-15 14:00:00" and  "2016-01-15 15:00:00";
+
+
+【笔记】死锁的定位方法
+/*1) 通过检查数据库表，能够检查出是哪一条语句被死锁，产生死锁的机器是哪一台。
+用dba用户执行以下语句
+如果有输出的结果，则说明有死锁，且能看到死锁的机器是哪一台。字段说明：
+username：死锁语句所用的数据库用户；
+lockwait：死锁的状态，如果有内容表示被死锁。
+status： 状态，active表示被死锁
+machine： 死锁语句所在的机器。
+program： 产生死锁的语句主要来自哪个应用程序*/
+select username,lockwait,status,machine,program from v$session where sid
+in (select session_id from v$locked_object);
+
+-- 2)用dba用户执行以下语句，可以查看到被死锁的语句
+select SQL_FULLTEXT                                                                                       
+from v$sql where hash_value in
+(select sql_hash_value from v$session where sid in
+(select session_id from v$locked_object));
+
+-- 3)查找死锁的进程：
+select s.username,
+l.object_id,
+l.session_id,
+s.serial#,
+l.oracle_username,
+l.os_user_name,
+l.process
+from v$locked_object l, v$session s
+where l.session_id = s.sid;
+
+-- 4)批量生成杀死会话的SQL（sid 在 100 以下的应当谨慎）：
+select 'alter system kill session ''' || sid || ',' || serial# || ''';' "deadlock"
+from v$session
+where sid in (select sid from v$lock where block = 1);
+select * from v$mystat
+
+
+【笔记】expdp 导出命令
+--- expdp 导出命令
+-- 全库导出
+export ORACLE_SID=数据库实例名
+expdp \'/ as sysdba\' full=y directory=备份目录 dumpfile=备份文件名-`date "+%Y-%m-%d-%H-%M-%S"`.dmp logfile=备份日志名-`date "+%Y-%m-%d-%H-%M-%S"`.log
+-- 全库并发导出
+export ORACLE_SID=数据库实例名
+expdp \'/ as sysdba\' full=y parallel=2 cluster=no directory=备份目录 dumpfile=备份文件名-`date "+%Y-%m-%d-%H-%M-%S"`_%U.dmp logfile=备份日志名-`date "+%Y-%m-%d-%H-%M-%S"`.log
+-- 指定用户导出
+expdp \'/ as sysdba\' schemas=用户名 directory=备份目录 dumpfile=备份文件名-`date "+%Y-%m-%d-%H-%M-%S"`.dmp logfile=备份日志名-`date "+%Y-%m-%d-%H-%M-%S"`.log
+-- 指定版本兼容性导出
+expdp \'/ as sysdba\' full=y version=11.2.0.1 directory=备份目录 dumpfile=备份文件名-`date "+%Y-%m-%d-%H-%M-%S"`.dmp logfile=备份日志名-`date "+%Y-%m-%d-%H-%M-%S"`.log
+
+--- 强制终止expdp导出任务
+-- 1) 查询JOB名称
+select job_name, state from dba_datapump_jobs;
+-- 2) ATTACH JOB
+expdp \'/ as sysdba\' attach=SYS_EXPORT_FULL_13
+-- 3) 终止JOB
+stop_job=immediate
+
+
+【SQL 语法相关】
+【NULL】
+NULL 和任何数值做运算，结果都为NULL
+NULL 在ORDER BY排序中是最大值
+NOT IN 默认 NOT NULL，NOT IN 子句中不能添加 NOT NULL
+
+【字段别名】
+WHERE 子句中不能使用字段别名，会报错
+ORDER BY 子句中可以使用字段别名
+
+【逻辑操作符】
+AND 优先级高于 OR
+
+【SQL 函数分类】
+单行函数和多行函数。
+单行函数：对单个行进行运算，并且每行返回一个结果。
+多行函数：对成组的行进行操作，每个行组给出一个结果。
+单行函数可以嵌套任意层，但分组函数最多可以嵌套两层。
+
+【单行函数】
+1、字符函数（UPPER、LOWER、CONCAT、SUBSTR、LENGTH）
+2、数字函数（ROUND、TRUNC、MOD）
+3、日期函数（SYSDATE、MONTHS_BETWEEN、ADD_MONTHS、NEXT_DAY、LAST_DAY）
+
+【多行函数】
+1、分组函数（又称聚合函数，如AVG、SUM、MAX、MIN、COUNT）， 分组函数会自动过滤空值
+2、GROUP BY
+
+【GROUP BY 子句】
+1、先使用WHERE，再用GROUP BY，最后用HAVING 过滤。
+2、确保 SELECT 列表中除了分组函数的列以外，所有列都包含在 GROUP BY 子句中。
+3、使用 GROUP BY 分组后，再用 HAVING 子句进行筛选过滤，最后用 ORDER BY 排序。
+
+【表的分类】
+普通堆栈表
+全局临时表
+分区表
+索引组织表
+簇表
+外部表
+
+【多表连接】
+内连接（等值连接（自然连接、自连接），非等值连接）
+外连接
+交叉连接（工作中应避免笛卡尔积）
+
+【自然连接】
+自动对两个表的同名字段列进行内连接，注意：同名字段列只能有1个
+
+【自连接】
+将自身表的一个镜像当作另外一个表，进行等值连接
+
+【子查询】
+一个查询嵌套在另一个查询中，叫子查询，用来代替自连接
+非关联子查询（子查询SQL可以独立执行，叫非关联子查询。包括：单行单列子查询、多行单列子查询、多行多列子查询）
+关联子查询（）
+
+【ORDER BY 子句】
+在合并查询中存在两个SELECT 语句，ORDER BY 是参照第一个SELECT 语句的列元素进行排序的。
+如果SELECT 子句中存在别名，则ORDER BY 子句中必须使用别名。
+ORDER BY 子句只能出现一次且出现在最后一行。
+
+针对用户设置表空间配额
+alter user aaa quota 1m on users;
+针对用户设置表空间配额
+alter user aaa quota 0 on users
+临时表空间和undo表空间不受配额限制
+
+【概要文件profile】
+限制口令
+限制会话资源
+
+删除概要文件profile，删除后，关联的用户又绑定到default上面
+drop profile abc cascade
+
+会话权限
+select * from session_privs;
+
+对象权限（共计8种）
+INSERT
+DELETE
+UPDATE
+SELECT
+ALTER
+EXECUTE
+INDEX
+REFERENCES
+注：12C中针对只读需求有 read 权限
+
+角色权限
+connect
+resource
+注：针对角色授权，必须按角色取消授权，unlimited tablespace 除外
+
+权限的级联
+系统权限级联：授权A用户权限时，添加 with admin option，则A 用户也具备该权限的授予权限，这称为系统权限级联。回收权限时需要对每个用户单独回收
+对象权限级联：授权B用户权限时，添加 with grant option，则B 用户也具备该权限的授予权限，这称为对象权限级联。回收权限时只需要回收第一个用户
+
+
+事务性
+
+
+
+
+【锁的分类】
+排他锁：排斥其他排他锁和共享锁（唯我独尊）
+共享锁：排斥其它排他锁，但不排斥其它共享锁（一家人好说话）
+
+【行锁与表锁】
+行锁(TX) 只有一种
+表锁(TM) 共有五种，分别是 RS,RX,S,SRX,X。LMODE 分别对应为 2,3,4,5,6
+【2】ROW SHARE 行共享(RS)，允许其他用户同时更新其他行，允许其他用户同时加共享锁，不允许有独占（排他性质）的锁
+【3】ROW EXCLUSIVE 行排他(RX)， 允许其他用户同时更新其他行，只允许其他用户同时加行共享锁或者行排他锁
+【4】SHARE 共享(S)，不允许其他用户同时更新任何行，只允许其他用户同时加共享锁或者行共享锁
+【5】SHARE ROW EXCLUSIVE(SRX) 共享行排他，不允许其他用户同时更新其他行，只允许其他用户同时加行共享锁
+【6】EXCLUSIVE (X)排他，其他用户禁止更新任何行，禁止其他用户同时加任何排他锁
+
+【手工加锁的方法】
+for update
+lock table
+
+【手工跳过被锁定的行】
+skip locked
+
+【死锁】
+双方同时争用对方的资源，就会产生死锁
+
+【解决死锁的方法】
+一方回滚
+管理员杀掉进程
+
+【CTAS 子查询创建表】
+CREATE TABLE a表 AS SELECT * FROM b表
+
+【回收站闪回表】
+flashback table    "tablename"    to before drop;
+
+【TRUNCATE 和 DELETE 的区别】
+TRUNCATE 是完全清空表，没有选择行的概念，而 DELETE 有选择行概念；
+TRUNCATE 清空表后立即释放空间，而 DELETE 不能释放空间；
+TRUNCATE 比 DELETE 快，因为TRUNCATE 不产生 UNDO，DELETE 产生。
+
+
+【约束】
+约束是数据库能够实施业务规则以及保证数据遵循实体--关系模型的一种手段
+相关数据字典 user_cons_columns、 user_constraints
+
+【约束的分类】
+1、非空约束 NOT NULL
+2、唯一约束 UNIQUE
+3、主键约束 PRIMARY KEY  非空且唯一
+4、外键约束 FOREIGNER KEY
+5、检查约束
+
+【定义约束的方法】
+在列上定义约束
+在表上时定义约束（在定义字段的最后添加约束条件）
+在表中追加定义约束
+
+【主键约束】
+每个表上只能创建一个主键约束，可以针对一列，也可以针对组合多列
+主键约束需要索引，如果有直接引用，如果没则自动创建一个唯一约束。
+删除主键约束后，引用的索引依然存在，自动创建的索引会被删除。
+
+【外键约束】
+一个表的主键是另一个表的外键，两个表的数据同步
+先有主键后有外键
+级联选项：on delete cascade 选项和 on delete set null
+主键非空且唯一，外键可以为空（如级联删除的时候）
+
+【检查约束】
+检查约束中，不能直接使用日期函数sysdate()，需要使用to_date()函数对sysdate()进行转换
+
+【约束状态】
+enable validate ：表中所有行都要符合约束，新输入数据必须符合约束
+enable novalidate：表中所有行可以不符合约束，但对新输入数据必须符合约束
+disable novalidate：禁用约束
+disable validate：对整个表设置只读
+
+
+【视图】
+将复杂的SQL语句定义为视图
+数据的对外展现
+
+【视图分类】
+简单视图：视图与基表一对一，通过视图修改基表
+复杂视图：视图与基表一对多，无法修改视图
+
+【内联视图】
+子查询SQL语句放在FROM后的查询语句叫内联视图
+
+【注意事项】
+创建视图，如果select 子句中存在表达式，则需要设置别名。
+创建只读视图，在SQL 语句后面增加WITH READ ONLY选项。
+视图中的数据不是来自基表的原数据，则不要对该视图做DML操作
+如果含有聚合函数、DISTINCT、基表中包含NOT NULL约束的列，则不能增加、删除、修改视图中的数据
+
+【索引分类】
+唯一索引：create unique index
+非唯一索引：create index
+组合索引：使用两个或两个以上的列建立的索引
+反向键索引：将键值反向组织，防止叶子节点出现热块 create index reverse
+函数索引：在索引中使用函数
+压缩索引：create index compress
+
+定义主键 PRIMARY KEY 或 UNIQUE 约束时，系统会自动创建索引
+
+【索引扫描类型】
+索引范围扫描：普通索引在执行计划中显示：INDEX RANGE SCAN，在非唯一索引上使用的都是范围扫描
+索引唯一扫描：唯一索引在执行计划中显示：INDEX UNIQUE SCAN
+索引跳跃扫描：在组合索引中，指定非前导列查询，会在执行计划中显示：INDEX SKIP SCAN
+索引全扫描：INDEX FULL SCAN 要查询的数据都在索引列，且索引列是非空约束，则走索引全扫描
+索引快速扫描：INDEX FAST FULL SCAN
+
+【适合创建索引】
+该列重复值较少（B树索引）
+该列重复值较多（位图索引）
+该列经常用于where 子句
+该列经常被访问
+
+【不适合创建索引】
+该表很小
+该列不经常用于where 子句
+该列经常被更新
+
+【索引相关视图】
+dba_indexes
+dba_ind_columns
+
+【同义词】
+定义：和视图一样，是一种映射关系，可以简化对象名称
+分类：私有同义词、公有同义词
+视图：dba_synonyms、user_synonyms
+语法：create synonym 同义词名称 for 表名
+注意：公有同义词和私有同义词同时存在，则优先查询私有同义词
+
+【序列】
+语法：create sequence 序列名
+初始化：序列名.nextval 先初始化，默认起始值是1，步长是1
+
+【INSERT 子句】
+insert 中包含values， 则表示单表单行插入
+insert 中包含子查询，则不能有values
+insert all无条件多表同时插入：insert all into 表A into 表B
+insert all带条件多表同时插入：insert all when then into 表A else into 表B
+insert first（过滤第1个条件后，剩余项再进行第2个条件过滤）：insert first when then into 表A when then into 表B
+
+【MERGE 子句】
+merge 可一次性实现对数据的insert、update、delete
+
+【WITH 子句】
+通过with子句可以将结果集临时定义别名，然后在后面的SQL中引用
+with 临时表名 as (子查询) , 临时表名 as (子查询) select子句
+
+【对象名称空间】
+表、视图、序列、私有同义词在同一个名称空间里
+索引和约束可以与数据表同名
+
+【分页查询特性】
+查询前五行：select * from 表名 fetch first 5 rows only
+查询下五行：select * from 表名 offset 5 rows fetch next 5 rows only
+查询前10%的数据：select * from 表名 fetch first 10 percent rows only
+如果指定with ties子句，那么拥有和最后一行相同的排序键值的行都会被fetch。如果指定了with ties子句，那么必须指定order by 。如果没有指定order by，那么不会有附加的行被返回
+
+【时间、日期】
+cast函数可以将日期转换为时间戳：select cast(sysdate as timestamp) from dual;
+查询数据库的时区：select dbtimezone from dual;
+查询当前会话的时区：select sessiontimezone from dual;
+
+【SGA】
+SHARE POOL：主要由库缓存、数据字典缓存、结果集缓存组成
+DATABASE BUFFER CACHE：查询或修改数据时，需要先把数据从磁盘读入缓存
+LOG BUFFER：提高写入在线REDO 日志文件的性能
+ORACLE 内存最小单位：v$sgainfo 中的 Granule Size
+
+【PGA】
+PGA有两个作用：
+1、客户端专有连接的会话
+2、客户端做ORDER BY 排序，在PGA 区域进行，如果PGA 太小，则使用temp 临时表空间
+
+【RESTORE和RECOVER】
+RESTORE：基于备份进行还原
+RECOVER：基于日志进行恢复
+
+
+
+【sqlplus 转义】
+密码前后带双引号，双引号用转义字符\"实现
+
+比如用户名叫shopping，密码为te@st执行的命令为：sqlplus shopping/\"te@st\"@syt
+
+
+
+【笔记】集群管理
+查看集群资源的状态
+crsctl stat res -t
+
+集群的启停（以root用户执行，管理本节点集群服务）
+cd /opt/u01/app/12.1.0/grid/bin
+./crsctl start/stop cluster
+
+集群的启停（以root用户执行，管理所有节点集群服务）
+cd /opt/u01/app/12.1.0/grid/bin
+./crsctl start/stop cluster -all
+
+查看单个节点的资源状态
+crsctl stat res -init -t
+
+数据库管理
+查看Oracle 数据库状态
+srvctl status database -d 数据库名称 -v
+
+Oracle 启停数据库
+srvctl start/stop database -d 数据库名称
+
+查看Oracle 实例状态
+srvctl status instance -d 数据库名称 -i 实例 -v
+
+Oracle 启停单实例
+srvctl start/stop instance -d 数据库名称 -i 节点名称
+
+
+【笔记】清理归档
+1.创建一个删除归档日志的内容：del_archivelog.txt
+		connect target /
+		run {
+			DELETE ARCHIVELOG ALL COMPLETED BEFORE 'SYSDATE-2';   //删除两天前归档日志
+			crosscheck archivelog all;
+			delete expired archivelog all;
+		}
