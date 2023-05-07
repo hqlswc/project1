@@ -17,3 +17,6 @@
 
 #### Check DB corrupt block
 `SQL> select * from v$database_block_corruption;`
+
+#### Good post about block corruption
+https://expertoracle.com/2018/03/10/physical-and-logical-block-corruption-in-oracle-database/
