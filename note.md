@@ -14,3 +14,6 @@
 
 #### Validate datebase
 `RMAN> backup validate database;`
+
+#### Check DB corrupt block
+`SQL> select * from v$database_block_corruption;`
