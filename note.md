@@ -20,3 +20,11 @@
 
 #### Good post about block corruption
 https://expertoracle.com/2018/03/10/physical-and-logical-block-corruption-in-oracle-database/
+
+#### RMAN Recovery Advisor
+`RMAN> list failure;`
+`RMAN> list failure <Failure ID> detail;`
+`RMAN> advise failure;`
+`RMAN> repair failure preview;`
+`RMAN> repair failure;`
+`RMAN> change failure all closed;`
