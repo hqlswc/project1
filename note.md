@@ -2,7 +2,7 @@
 
 `SQL> select * from v$backup_async_io;`
 
-#### Corrupt DB block
+#### Corrupt DB block manually
 `Shell> dd of=users.dbf bs=8192 conv=notrunc seek=139 <<EOF
 XXX
 EOF`
