@@ -3,9 +3,9 @@
 `SQL> select * from v$backup_async_io;`
 
 #### Corrupt DB block manually
-`Shell> dd of=users.dbf bs=8192 conv=notrunc seek=139 <<EOF
-xxx
-`
+`Shell> dd of=users.dbf bs=8192 conv=notrunc seek=139<<EOF`<br>
+`xxx`<br>
+`EOF`<br>
 
 #### BlockRecover check 
 `Shell> dbv file=users.dbf blocksize=8192`
